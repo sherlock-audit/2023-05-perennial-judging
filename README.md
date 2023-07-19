@@ -1,33 +1,4 @@
-# Issue H-1: Vaults can't handle the incentives distributed by the products 
-
-Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/43 
-
-## Found by 
-mstpr-brainbot, nobody2018, rvierdiiev
-## Summary
-Vaults are eligible for product incentive rewards but lack the necessary functions to claim and distribute these rewards to users within the vault. 
-## Vulnerability Detail
-In the current scenario, if a product has an incentiviser, all depositors are eligible for these incentives. As vaults also make deposits into products, they are also qualified to claim rewards from the incentiviser. However, the vaults lack the functionality to claim these rewards from the incentiviser, and there isn't any existing code to distribute these rewards to the users within the vault. Even when a vault does not participate in the incentives, its presence still dilutes the share of rewards for other product users in the reward pool.
-## Impact
-Although the rewards can be claimed for anyone, vault has no functionality to handle the reward tokens. This will create an economical damage to reward depositor (program owner) and the users in the product hence, I'll call it as high.
-## Code Snippet
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L167
-## Tool used
-
-Manual Review
-
-## Recommendation
-Implement functionality allowing vault depositors to claim product-related rewards if they're eligible. If vaults are excluded from such rewards, their deposited balance should not factor into the incentiviser's distribution calculations, thereby increasing other product depositors' reward shares.
-
-
-
-## Discussion
-
-**arjun-io**
-
-This is intended behavior. Vaults aren't part of the core protocol and we opted to not build in incentivizer reward handling in the current vault iterations (although that can be added in a future implementation of the Vaults)
-
-# Issue H-2: BalancedVault.sol: loss of funds + global settlement flywheel / user settlement flywheels getting out of sync 
+# Issue H-1: BalancedVault.sol: loss of funds + global settlement flywheel / user settlement flywheels getting out of sync 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/45 
 
@@ -156,63 +127,6 @@ The solution to implement depends on how flexible the sponsor wants the deposit 
 **KenzoAgada**
 
 Also note duplicate issue #74 which mentions how a user can redeem more assets than he's entitled to.
-
-# Issue H-3: BalancedVault.sol: Rebalancing logic can get stuck, leading to a loss of funds if a user wants to resolve it 
-
-Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/66 
-
-## Found by 
-mstpr-brainbot, roguereddwarf
-## Summary
-Each action that is executed in the Vault (`deposit`, `redeem`, `claim`, `sync`) calls the `_rebalance` function. This function first rebalances the collateral and then the position:
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L431-L434
-
-First collateral is withdrawn, then deposited (both if needed):
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L440-L465
-
-Then the position is reduced and increased (both if needed)
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L499-L519
-
-The problem is that rebalancing can revert which leaves the user that wants to execute an operation in the Vault no other choice other than sending additional assets to the Vault (note that calling the `deposit` function might not be possible because rebalancing reverts). The user needs to send the funds directly to the Vault, without calling the deposit function. Thereby this would be a loss of funds for the user because the additional funds would be shared across all users.
-
-## Vulnerability Detail
-Assume e.g. that the amount of collateral that the Vault has deposited into a Product is a little bit over the minimum collateral amount.
-
-When the Product's makers are settled at a loss, the rebalancing logic in the Vault then tries to withdraw all collateral from the Product because it is below the minimum amount.
-
-However this causes a revert because the position has not been closed yet and zero collateral cannot maintain the position.
-
-## Impact
-The Vault can get stuck and to resolve the situation, assets need to be sent to the Vault which are then essentially lost because they are shared among all users.
-
-## Code Snippet
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L431-L434
-
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L440-L465
-
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L499-L519
-
-## Tool used
-Manual Review
-
-## Recommendation
-It should not be possible that the rebalancing fails because it is required for all actions that can be executed in the Vault.
-However solving the issue is not as simple as changing the order of actions in the call to `_rebalance` to this:
-1. reduce position
-2. reduce collateral
-3. increase collateral
-4. increase position
-
-That's because there is delayed settlement in the Product and a change in position size is not immediately reflected.
-Therefore a solution needs to be adopted that first reduces the position and then waits for settlement until steps 2-4 are executed.
-
-
-
-## Discussion
-
-**KenzoAgada**
-
-You can look at the duplicates referenced above to see additional perspectives and scenarios of this issue.
 
 # Issue M-1: ChainlinkAggregator: binary search for roundId does not work correctly and Oracle can even end up temporarily DOSed 
 
@@ -347,7 +261,321 @@ After applying the changes, the binary search only returns `0` if both `minRound
 
 If this line is passed we know that either of both is valid and we can use `minRoundId` if it is the better result.
 
-# Issue M-2: Payoff definitions that can cross zero price are not supported 
+
+
+## Discussion
+
+**roguereddwarf**
+
+Escalate for 10 USDC
+
+I think this should be a "High" severity finding.
+The binary search lies at the core of the protocol.
+All functionality for users to open / close trades and liquidations relies on the Chainlink oracle.
+
+By not finding a valid `roundId` obviously many users are put at risk of losing funds (-> not being able to close trades).
+
+Similarly when an unintended (i.e. sub-optimal) `roundId` is found this leads to a similar scenario where settlements / liquidations occur at unintended prices.
+
+In summary, the fact that the binary search algorithm lies at the core of the protocol and there is a very direct loss of funds makes me think this should be "High" severity.
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I think this should be a "High" severity finding.
+> The binary search lies at the core of the protocol.
+> All functionality for users to open / close trades and liquidations relies on the Chainlink oracle.
+> 
+> By not finding a valid `roundId` obviously many users are put at risk of losing funds (-> not being able to close trades).
+> 
+> Similarly when an unintended (i.e. sub-optimal) `roundId` is found this leads to a similar scenario where settlements / liquidations occur at unintended prices.
+> 
+> In summary, the fact that the binary search algorithm lies at the core of the protocol and there is a very direct loss of funds makes me think this should be "High" severity.
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**securitygrid**
+
+Comment from watson:
+[Chainlink: ETH/USD](https://etherscan.io/address/0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419#readContract) has been deployed for 3 years, and the current phaseID is only 6. The binary search is only triggered when [this condition](https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-oracle/contracts/ChainlinkFeedOracle.sol#L117) is met, that is, when a new phaseID is generated. This is infrequent.
+This is from the [chainlink docs](https://docs.chain.link/data-feeds/historical-data#roundid-in-proxy): `phaseId` is incremented each time the underlying aggregator implementation is updated.
+
+**KenzoAgada**
+
+The issue is dependent upon a Chainlink changing of phase (which is quite infrequent) and the new phase having only 1 round.
+The impact as stated in the finding is that in those conditions, the product flywheel is jammed until further rounds are issued. (Then, the algorithm will correctly return round 2.)
+So the impact is only very temporary and rare DOS (which can impact user funds).
+
+I think escalation is invalid and medium severity is appropriate.
+
+**arjun-io**
+
+To add here - the binary search is also a backup solution to simply checking if roundId + 1 exists in the previous phase ([code](https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-oracle/contracts/types/ChainlinkAggregator.sol#L70)). So additionally the last seen round in the previous phase has to be the very last roundID in that phase
+
+**jacksanford1**
+
+Agree with Medium due to Kenzo's reasons (unlikely and temporary situation which only indirectly could result in user funds loss due to liquidations). cc @roguereddwarf 
+
+**roguereddwarf**
+
+Agreed
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+Unlikely and temporary situation which only indirectly could result in user funds loss due to liquidations is part of the reason why this is not being upgraded to a High. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [roguereddwarf](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/4/#issuecomment-1614471358): rejected
+
+# Issue M-2: Missing Sequencer Uptime Feed check can cause unfair liquidations on Arbitrum 
+
+Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/37 
+
+## Found by 
+roguereddwarf
+## Summary
+When the Arbitrum sequencer is down and then comes back up, all Chainlink price updates will become available on Arbitrum within a very short time.
+
+This leaves users no time to react to the price changes which can lead to unfair liquidations.
+
+## Vulnerability Detail
+Chainlink explains their Sequencer Uptime Feeds [here](https://docs.chain.link/data-feeds/l2-sequencer-feeds).
+
+Quoting from the documentation:
+> To help your applications identify when the sequencer is unavailable, you can use a data feed that tracks the last known status of the sequencer at a given point in time. This helps you prevent mass liquidations by providing a grace period to allow customers to react to such an event.
+
+Users are still able in principle to avoid liquidations by interacting with the Arbitrum delayed inbox via L1, but this is out of reach for most users.
+
+## Impact
+Users can get unfairly liquidated because they cannot react to price movements when the sequencer is down and when the sequencer comes back up, all price updates will immediately become available.
+
+## Code Snippet
+This issue can be observed in both the `ChainlinkOracle` and `ChainlinkFeedOracle`, which do not make use of the sequencer uptime feed to check the status of the sequencer:
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-oracle/contracts/ChainlinkOracle.sol#L59-L64
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-oracle/contracts/ChainlinkFeedOracle.sol#L94-L97
+
+## Tool used
+Manual Review
+
+## Recommendation
+The Chainlink documentation contains an example for how to check the sequencer status: https://docs.chain.link/data-feeds/l2-sequencer-feeds
+
+There can be a grace period when the sequencer comes back up for users to act on their collateral (increase collateral to avoid liquidation). 
+
+
+
+## Discussion
+
+**roguereddwarf**
+
+Escalate for 10 USDC
+
+This issue is marked as a duplicate of #13.
+
+This is wrong and I argue that my report is a legitimate Medium (speaking only of my report here, other dupes must be checked as well).
+
+#13 argues that outdated prices would be used when the sequencer is down.
+The sponsor correctly explained that:
+> From our understanding, when the sequencer is down the prices can't be updated by the data feed so therefore settlement can't occur. This means that effectively each product is paused as no state changes can occur
+
+My point on the other hand is that when the sequencer comes back up, all the old prices will be processed at once and users have no time to react to price changes, which can lead to unfair liquidations.
+
+Therefore I had the suggestion for a grace period.
+
+You can see a detailed explanation for my argument in the Aave V3 technical paper: https://github.com/aave/aave-v3-core/blob/master/techpaper/Aave_V3_Technical_Paper.pdf (section 4.6)
+![2023-06-30_09-38](https://github.com/sherlock-audit/2023-05-perennial-judging/assets/118631472/9e94b0cd-1be0-4449-8d8f-4588b6939813)
+
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> This issue is marked as a duplicate of #13.
+> 
+> This is wrong and I argue that my report is a legitimate Medium (speaking only of my report here, other dupes must be checked as well).
+> 
+> #13 argues that outdated prices would be used when the sequencer is down.
+> The sponsor correctly explained that:
+> > From our understanding, when the sequencer is down the prices can't be updated by the data feed so therefore settlement can't occur. This means that effectively each product is paused as no state changes can occur
+> 
+> My point on the other hand is that when the sequencer comes back up, all the old prices will be processed at once and users have no time to react to price changes, which can lead to unfair liquidations.
+> 
+> Therefore I had the suggestion for a grace period.
+> 
+> You can see a detailed explanation for my argument in the Aave V3 technical paper: https://github.com/aave/aave-v3-core/blob/master/techpaper/Aave_V3_Technical_Paper.pdf (section 4.6)
+> ![2023-06-30_09-38](https://github.com/sherlock-audit/2023-05-perennial-judging/assets/118631472/9e94b0cd-1be0-4449-8d8f-4588b6939813)
+> 
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**KenzoAgada**
+
+- Watson is correct in saying that his issue is different than the rest of the "Arbitrum sequencer downtime" issues with regards to the impact described.
+- While all other issues speak about stale prices, this issue says that the problem is unfair liquidations as users will not have time to react when oracle data feeds are updated again.
+- Therefore watson suggests a grace period.
+- So this is similar issue to #190, which mentions the lack of grace period when unpausing.
+- There is an ongoing escalation there. The protocol team disputed the issue, but the escalator wrote that the _validity_ of the issue should be accepted. Please see that issue for all the context and comments.
+
+I think that this issue should have a similar fate to #190. If that escalation is accepted, this one should be accepted as well.
+
+**jacksanford1**
+
+Believe #190 is trending towards being accepted. This issue has a different root case (Arbitrum sequencer down vs. protocol team pausing contracts) but the effect is the same (depositors can't salvage their position before they get liquidated). 
+
+I think it should be a valid Medium, even though the root case is a temporary freezing. 
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+Reasoning can be found in previous message. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [roguereddwarf](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/37/#issuecomment-1614260151): accepted
+
+# Issue M-3: Market Allows Zero Amount Positions Which Can Cause Vault Rebalancing to Revert 
+
+Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/39 
+
+## Found by 
+mstpr-brainbot
+## Summary
+When adjusting positions, it correctly calculates the amount and respects limits, but it runs into a problem when dealing with a zero amount in the openMake and closeMake functions. This problem occurs when the Vault doesn't wish to change any position but still communicates a "0" amount to the product, resulting in revert and halting the rebalancing process.
+## Vulnerability Detail
+When decreasing a position, the Market Vault calculates the available room and permits only the closing of positions up to the point where the maker equals the taker. If the market's taker is greater than the maker, the amount is deemed as zero. Conversely, when increasing a position, the Vault checks if the product's maker limit is exceeded. If it is, the Vault assigns the amount as zero. Following this, the Vault executes the closeMake and openMake functions using the calculated amount.
+
+However, an issue arises with the Vault's openMake and closeMake functions operating with a zero amount. Even though the Vault might not want to open or close any position, it still calls the product with a "0" amount. This leads to the modifiers throwing an error, and the rebalancing process gets stuck.
+## Impact
+In such cases where maker limit is exceeded in product or takers > makers vaults rebalancing will be stucked. Therefore, I'll call it as high 
+## Code Snippet
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L502-L509
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L274-L355
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L525-L544C6
+
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L499-L519
+## Tool used
+
+Manual Review
+
+## Recommendation
+If the calculated openMake/closeMake amount is "0" don't call the products functions. Just exit the function.
+
+
+
+## Discussion
+
+**mstpr**
+
+Escalate for 10 USDC
+
+This is a valid issue. 
+
+The problem stated here is not that the products allow "0" amount positions to be created. It is the opposite, it shouldn't allow the "0" amount positions. When vault decides that the maker limit is reached, it sets the position to be opened as "0" and calls the product. If the position to be opened calculated as "0" the product will revert because of the modifiers.
+
+Example:
+
+Imagine the product has more takers than makers and the position needs to be decreased in vault. Vault will calculate the closeMake amount as 0 as seen here, and calls the product with closeMake(0)
+https://github.com/sherlock-audit/2023-05-perennial/blob/0f73469508a4cd3d90b382eac2112f012a5a9852/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L502-L509
+
+closeMake function has a modifier called takerInvariant which will be executed after the function body and it checks the socialization factor which is maker/taker, and since takers are greater than makers this modifier will revert because socialization factor indeed lesser than 1.
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/0f73469508a4cd3d90b382eac2112f012a5a9852/perennial-mono/packages/perennial/contracts/product/Product.sol#L535-L544
+
+So, vault knew that its going to revert and that's why it calculated it as 0 but it shouldn't have called the product because product allows "0" amount positions and modifiers will revert.
+
+same is applicable with openMake. If the makerLimit is exceeded in product, vault calculates the amount of positions to be opened as "0" but it calls the product with openMake("0") and it reverts in the makerInvariant modifier.
+
+The correct behaviour would be exiting the function if the position to be opened or closed found to be "0".
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> This is a valid issue. 
+> 
+> The problem stated here is not that the products allow "0" amount positions to be created. It is the opposite, it shouldn't allow the "0" amount positions. When vault decides that the maker limit is reached, it sets the position to be opened as "0" and calls the product. If the position to be opened calculated as "0" the product will revert because of the modifiers.
+> 
+> Example:
+> 
+> Imagine the product has more takers than makers and the position needs to be decreased in vault. Vault will calculate the closeMake amount as 0 as seen here, and calls the product with closeMake(0)
+> https://github.com/sherlock-audit/2023-05-perennial/blob/0f73469508a4cd3d90b382eac2112f012a5a9852/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L502-L509
+> 
+> closeMake function has a modifier called takerInvariant which will be executed after the function body and it checks the socialization factor which is maker/taker, and since takers are greater than makers this modifier will revert because socialization factor indeed lesser than 1.
+> 
+> https://github.com/sherlock-audit/2023-05-perennial/blob/0f73469508a4cd3d90b382eac2112f012a5a9852/perennial-mono/packages/perennial/contracts/product/Product.sol#L535-L544
+> 
+> So, vault knew that its going to revert and that's why it calculated it as 0 but it shouldn't have called the product because product allows "0" amount positions and modifiers will revert.
+> 
+> same is applicable with openMake. If the makerLimit is exceeded in product, vault calculates the amount of positions to be opened as "0" but it calls the product with openMake("0") and it reverts in the makerInvariant modifier.
+> 
+> The correct behaviour would be exiting the function if the position to be opened or closed found to be "0".
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**arjun-io**
+
+We're looking into this for the socialization case with a 0 value position. However, in general an openMake/closeMake call (even if 0) is _required_ for each rebalance because a settlement version needs to be stamped for that action. This ensures that valueAtVersion(version + 1) is available for an given stamped version in the vault.
+
+**arjun-io**
+
+This does appear to be a valid issue although the fix recommended is incorrect. The vault should be opening 0 value positions in some way when the socialization or makerLimit cases are hit. We'll take a closer look into the right fix here 
+
+We would say this is a medium issue though because it is an edge case in the markets and does not result in loss of user funds
+
+**KenzoAgada**
+
+I didn't fully understand the original issue, but the escalation made it clear.
+Agreeing with sponsor that issue is a valid medium.
+
+**jacksanford1**
+
+Ok, valid medium
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+Based on consensus from Lead Judge and Arjun after seeing escalator's comment. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [mstpr](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/39/#issuecomment-1612850960): accepted
+
+# Issue M-4: Payoff definitions that can cross zero price are not supported 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/40 
 
@@ -391,7 +619,341 @@ If `currentPrice==0`, a meaningful value could be to set `currentPrice=1`
 
 We'll update the docs to clarify some payoffs which aren't supported
 
-# Issue M-3: If long and short products has different maker fees, vault rebalance can be spammed to eat vaults balance 
+**SergeKireev**
+
+Escalate for 10 USDC
+
+This should be low/informational, since payoffs crossing zero price are indeed supported because absolute value of the price is taken in account to compute leverage:
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L486
+
+However the concept of leverage itself makes no sense if price == 0.
+
+This is an undefined behavior in a very very unlikely edge case (Someone defines a zero crossing payoff, and this payoff ends up being exactly zero for a prolonged duration)
+
+Additionally the recommendation seems to do more harm than good:
+> If currentPrice==0, a meaningful value could be to set currentPrice=1
+
+If market conditions mark an asset to zero, it seems best to fail than to adjust the price to another arbitrary value
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> This should be low/informational, since payoffs crossing zero price are indeed supported because absolute value of the price is taken in account to compute leverage:
+> https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L486
+> 
+> However the concept of leverage itself makes no sense if price == 0.
+> 
+> This is an undefined behavior in a very very unlikely edge case (Someone defines a zero crossing payoff, and this payoff ends up being exactly zero for a prolonged duration)
+> 
+> Additionally the recommendation seems to do more harm than good:
+> > If currentPrice==0, a meaningful value could be to set currentPrice=1
+> 
+> If market conditions mark an asset to zero, it seems best to fail than to adjust the price to another arbitrary value
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**roguereddwarf**
+
+Escalate for 10 USDC
+
+I disagree with the first escalation and think this should remain "Medium" severity.
+
+The docs clearly state that ANY payoff function is supported which includes a payoff function that crosses zero.
+
+This is an edge case in which the Vault does not work, i.e. users cannot interact with the Vault which puts the users' funds at risk because they are unable to withdraw them and thereby are at risk of liquidation / adverse price movements.
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I disagree with the first escalation and think this should remain "Medium" severity.
+> 
+> The docs clearly state that ANY payoff function is supported which includes a payoff function that crosses zero.
+> 
+> This is an edge case in which the Vault does not work, i.e. users cannot interact with the Vault which puts the users' funds at risk because they are unable to withdraw them and thereby are at risk of liquidation / adverse price movements.
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**KenzoAgada**
+
+This is indeed quite an edge case, but it is there, and part of an audit's job is to find the edge cases.
+Product owners can choose any payoff function, including one that returns 0 at some instances.
+The issue can cause temporary DOS due to product flywheel jamming.
+I think medium severity is appropriate.
+
+**mstpr**
+
+Didn't escalated it because @SergeKireev already explained in very good. This is indeed an informational or invalid issue.
+
+As stated in the readme:
+<img width="842" alt="image" src="https://github.com/sherlock-audit/2023-05-perennial-judging/assets/120012681/ca46cd46-5834-4b84-99b7-507bd2e04e3f">
+
+if the product payoff is dodgy, then its users responsibility to deposit in such product. 
+
+Also, how can currentPrice returns "0" ? If the price of something is "0" then how can you potentially trade and even leverage the asset? As @SergeKireev said, if the current price returns to be "0", then it's best to leave it because there is something wrong with the oracle. 
+
+Also, I don't think document needed to say "0 * ETH" positions are not allowed. It's clearly doesn't make sense to inform users in the document that this is not accepted.
+
+Clearly, 0 payoff functions are not supported because they don't make sense. Also, if any of the products price is cross to 0 Perennial still allows that, it just reverts because that's the right thing to do. 
+
+**jacksanford1**
+
+I'm leaning towards Invalid because the Sherlock judging rules state that temporary freezing/DOS is not a valid issue:
+https://docs.sherlock.xyz/audits/judging/judging#some-standards-observed
+
+Could be valid if @roguereddwarf can come up with an attack vector beyond temporary freezing. 
+
+@mstpr also brings up a "trusted actor" problem which I haven't fully evaluated. 
+
+
+
+**roguereddwarf**
+
+The impact beyond temporary freezing is that a user can e.g. not redeem his funds in an emergency event, risking further losses.
+
+**jacksanford1**
+
+Ok, I agree with the premise that an extended DOS could result in unintended behavior like liquidations which the user may not have a chance to prevent when the DOS ends. 
+
+@roguereddwarf @mstpr @KenzoAgada @SergeKireev How should we think about the realistic length of the DOS and the damage that could result to users because of it? Is this DOS going to last a few blocks maximum? Or a few months potentially?
+
+**SergeKireev**
+
+@jacksanford1
+With all due respect, discussing the details of the DOS in this case is missing the bigger picture;
+
+A market accepting a zero price is broken in more serious ways:
+
+During the period in which the oracle returns zero, any trader Alice can open positions of arbitrary size without having any collateral deposited since maintenance is zero:
+https://github.com/sherlock-audit/2023-05-perennial-SergeKireev/blob/c90b017ad432b283bcfbec594f80e18204ee98c3/perennial-mono/packages/perennial/contracts/product/types/position/AccountPosition.sol#L68-L73
+
+and collateral can be zero:
+https://github.com/sherlock-audit/2023-05-perennial-SergeKireev/blob/c90b017ad432b283bcfbec594f80e18204ee98c3/perennial-mono/packages/perennial/contracts/collateral/Collateral.sol#L211-L227
+
+So if the oracle ever updates again to a non-zero price, Alice creates a shortfall of an arbitrary size on the protocol.
+
+In that regard, by reverting, `BalancedVault` has a more reasonable behavior than the underlying market when oracle price is zero.
+
+However `BalancedVault` links many heterogenous markets together, and in the scenario in which one fails, the whole vault fails and funds may stay locked up. 
+I would argue that this report is an example of the broader #232 and thus should be a valid duplicate.
+
+**mstpr**
+
+@jacksanford1 
+How can price be "0" ? I think we need the answer for this question. 
+
+Obviously creating a "0 * ETH" payoff product is not make sense and even though its created nobody would deposit to such product. 
+
+If price is "0" this can be possible because of an oracle error. I don't think Chainlink validations are a medium finding in Sherlock. If it is, then there are many other submissions regards to that. 
+Example:
+https://github.com/sherlock-audit/2023-05-perennial-judging/issues/62
+I am sure there are many others aswell
+
+**KenzoAgada**
+
+> @roguereddwarf @mstpr @KenzoAgada @SergeKireev How should we think about the realistic length of the DOS and the damage that could result to users because of it? Is this DOS going to last a few blocks maximum? Or a few months potentially?
+
+I would consider it few blocks maximum.
+
+Anyway, @SergeKireev 's last comment pretty much convinced me that actually reverting is a relatively logical thing to do in this scenario.
+
+My original thinking was more like, we can not know how funky the product owner would define his payout function. (shifting, steps, more inventions...). And if it's 0, accidentally or purposefully, indeed the product would be jammed. But as the escalators wrote, there's no real meaning to a payoff function returning 0.
+
+I already considered this quite the edge case before... At the moment I agree with the escalators (love using that word 🙂) that medium severity is too much.
+
+
+**jacksanford1**
+
+Ok, the original issue impact was focused on DOS, so I'll stay on that topic. If Kenzo is correct and the length of the DOS is a "few blocks maximum" then this should be a low severity issue. But open to arguments from @roguereddwarf or anyone else as to why it should stay a Medium. 
+
+**roguereddwarf**
+
+I'd like to add that the price of an asset might just go to zero (look e.g. what we've seen with FTX and FTT).
+
+In this case it should still be possible for users of the Vault that have redeemed their shares to call the claim function and get their share of the assets that were within the Vault and have not been lost (pointing this out because someone might argue price=0 implies that there are no funds left in the Vault):
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/0f73469508a4cd3d90b382eac2112f012a5a9852/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L211-L228
+
+Which would however revert when `_rebalance` is called which is my whole point in this report.
+
+While the title of my report says "that can cross zero price" this technically includes the case when the price of an asset just goes to zero due to an issue with the asset.
+
+In this case the DOS can be for an unlimited amount of time.
+
+**KenzoAgada**
+
+While the payoff function might transform the price and return 0 and then withdrawals would be bricked, I don't think the oracle price can return 0... Chainlink has a `minAnswer` which is bigger than 0.
+
+**jacksanford1**
+
+Fair point from Kenzo that @roguereddwarf can respond to. I also think FTT is a tough example because I'm not aware that it ever went to 0. And I can't think of another token that actually hit zero ever. I'm not saying that it's impossible, I'm saying that the likelihood is extremely low because there's always a chance that a token could have value in the future, so there is always some bid for it. And if the severity of this issue is based on the likelihood of a token hitting zero, then I think this is relevant. 
+
+**roguereddwarf**
+
+Fair points, and yeah there could be a small bid to get the price above 0.
+
+Quoting from @jacksanford1 from a previous message.
+> Ok, I agree with the premise that an extended DOS could result in unintended behavior like liquidations which the user may not have a chance to prevent when the DOS ends.
+
+> How should we think about the realistic length of the DOS and the damage that could result to users because of it? Is this DOS going to last a few blocks maximum? Or a few months potentially?
+
+Here's the exotic payoff function that can result in a DOS for a few months:
+
+![2023-07-13_09-13](https://github.com/sherlock-audit/2023-05-perennial-judging/assets/118631472/b589a877-a91f-405c-ae45-b787dbab3b06)
+
+As the price goes below 1700 USD and stays there, the issue becomes permanent.
+
+**jacksanford1**
+
+Ok @SergeKireev this makes a very important distinction between "price returned by oracle" and "transformed price after the payoff function is applied."
+
+I think the issue is saying that the transformed price is the one that is problematic if it hits zero. This would make more sense and could be a valid Medium.
+
+@arjun-io Do you agree that the payoff function in the above graph is realistic?
+
+**arjun-io**
+
+@jacksanford1 It could be realistic since any payoff function is technically possible. I think the question here might be severity, since this isn't really a naturally occurring case and the payoff function would need to be explicitly designed in such a way that a `0` price is feasible for a long period of time.
+
+**SergeKireev**
+
+> Ok @SergeKireev this makes a very important distinction between "price returned by oracle" and "transformed price after the payoff function is applied."
+> 
+> I think the issue is saying that the transformed price is the one that is problematic if it hits zero. This would make more sense and could be a valid Medium.
+> 
+> @arjun-io Do you agree that the payoff function in the above graph is realistic?
+
+Np, I don't think this changes our discussion above, I agree with the feasability of such a Payoff function.
+
+It can make sense in implementing some derivative products such as options, as noted by @roguereddwarf in latest comment.
+However these products don't work more broadly on perennial as they allow for unbounded sized positions with zero collateral  (see my previous comment). As such, they wouldn't make sense in the context of a `BalancedVault` either, that's why I argue for this issue to be a low severity.
+
+**mstpr**
+
+regards to @roguereddwarf payoff function,
+
+I don't think anybody would deposit to such product that defines the payoff like this. Technically we can even create a payoff function where the price is always "0" but as long as there are no user depositing then nothing to worry about imo. 
+Also, I think if price is ever "0" best thing to do is revert so even in such payoff it makes sense to revert. 
+
+**jacksanford1**
+
+Agree with others that this payoff function is actually realistic and could mimic an options payoff, etc. So I'll assume there is a world where this exists and users deposit into it. 
+
+In that case, I'm sorry to drag this on, but I'd be interested in @roguereddwarf's response to Serge's comment as probably the final thing holding this back from being Medium severity:
+
+> However these products don't work more broadly on perennial as they allow for unbounded sized positions with zero collateral (see my previous comment). As such, they wouldn't make sense in the context of a BalancedVault either, that's why I argue for this issue to be a low severity.
+
+**roguereddwarf**
+
+Isn't this then just saying more broadly that there are other things that break under the assumption of a realistic payoff function?
+
+If what Serge is saying is correct, then part A of the protocol breaks before part B under the assumption of a realistic payoff function.
+
+In the case that Serge is wrong, then part A does not break but part B breaks.
+
+Either way there is an issue with realistic payoff functions (options payoff).
+
+**SergeKireev**
+
+> Isn't this then just saying more broadly that there are other things that break under the assumption of a realistic payoff function?
+> 
+> If what Serge is saying is correct, then part A of the protocol breaks before part B under the assumption of a realistic payoff function.
+> 
+> In the case that Serge is wrong, then part A does not break but part B breaks.
+> 
+> Either way there is an issue with realistic payoff functions (options payoff).
+
+Yeah I agree with that, only thing is since it's not possible to create a functional market for this feasible payoff function, it is very unlikely somebody would do it at all.
+
+Then this means that a BalancedVault created upon such a market would be even less likely to exist, which means that there is no use implementing the remediation suggested in this report, and the severity should be low
+
+**roguereddwarf**
+
+Why is it not possible?
+
+Assume the payoff function I posted above:
+![2023-07-13_09-13](https://github.com/sherlock-audit/2023-05-perennial-judging/assets/118631472/0f0642a0-74cc-40b1-9be9-10ac4cb80f99)
+
+Assume the current price of ETH is 2000 USD.
+
+Now the price drops below 1700 USD and we run into the issue.
+
+Nothing prevents one from creating such a payoff function and it works fine as long as the price is above 1700 USD.
+
+
+**SergeKireev**
+
+> Why is it not possible?
+> 
+> Assume the payoff function I posted above:
+> ![2023-07-13_09-13](https://github.com/sherlock-audit/2023-05-perennial-judging/assets/118631472/0f0642a0-74cc-40b1-9be9-10ac4cb80f99)
+> 
+> Assume the current price of ETH is 2000 USD.
+> 
+> Now the price drops below 1700 USD and we run into the issue.
+> 
+> Nothing prevents one from creating such a payoff function and it works fine as long as the price is above 1700 USD.
+> 
+
+As I said earlier, the market would be completely broken, since it allows to take positions of any size without collateral
+
+**roguereddwarf**
+
+> @jacksanford1 With all due respect, discussing the details of the DOS in this case is missing the bigger picture;
+> 
+> A market accepting a zero price is broken in more serious ways:
+> 
+> During the period in which the oracle returns zero, any trader Alice can open positions of arbitrary size without having any collateral deposited since maintenance is zero: https://github.com/sherlock-audit/2023-05-perennial-SergeKireev/blob/c90b017ad432b283bcfbec594f80e18204ee98c3/perennial-mono/packages/perennial/contracts/product/types/position/AccountPosition.sol#L68-L73
+> 
+> and collateral can be zero: https://github.com/sherlock-audit/2023-05-perennial-SergeKireev/blob/c90b017ad432b283bcfbec594f80e18204ee98c3/perennial-mono/packages/perennial/contracts/collateral/Collateral.sol#L211-L227
+> 
+> So if the oracle ever updates again to a non-zero price, Alice creates a shortfall of an arbitrary size on the protocol.
+> 
+> In that regard, by reverting, `BalancedVault` has a more reasonable behavior than the underlying market when oracle price is zero.
+> 
+> However `BalancedVault` links many heterogenous markets together, and in the scenario in which one fails, the whole vault fails and funds may stay locked up. I would argue that this report is an example of the broader #232 and thus should be a valid duplicate.
+
+This is the previous comment you are referring to.
+
+Maybe I have missed the broader picture in that I didn't realize that in addition to the DOS there are other problems as well (which as you rightfully point out are more serious).
+
+However I identified the payoff function causing the issue in the first place and even the sponsor said this can be a realistic scenario.
+
+As long as the price of ETH would not drop below 1700 USD in my example there would be no issue so this might only be discovered when it's too late.
+
+I agree that this finding is probably best considered as a duplicate of #232.
+
+Can we agree on this @SergeKireev @jacksanford1 ?
+
+**SergeKireev**
+
+Agree with this, thanks for acknowledging @roguereddwarf 
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+It seems like this issue is likely enough and severe enough to be considered a Medium. However I don't believe it is similar enough to #232 to be considered a duplicate, so it will be a unique Medium. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [roguereddwarf](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/40/#issuecomment-1614482087): accepted
+- [SergeKireev](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/40/#issuecomment-1612708430): rejected
+
+# Issue M-5: If long and short products has different maker fees, vault rebalance can be spammed to eat vaults balance 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/41 
 
@@ -436,7 +998,68 @@ Consider accounting the positionFee if there are any on any of the markets or as
 
 This is a good call - currently vault's don't support handling maker fees in a clean way. We probably won't fix this in the current version of the vaults but it's something we'd likely address in the future as maker fees might become necessary in certain markets
 
-# Issue M-4: BalancedVault.sol: Early depositor can manipulate exchange rate and steal funds 
+**mstpr**
+
+Escalate for 10 USDC
+
+I think this is a valid high since it can drain the vaults balance significantly.
+
+As stated in the impact section of the issue, if the price movement to one side is high, there will be a difference between the vaults short and long products collateral balance hence, the more fee to apply. Therefore, calling rebalancing few more times will result in more losses and this will start taking the funding fees that the vault generating. Although at some point it will converge to very small numbers, this will lead to loss of funds for the vault depositors.
+
+
+
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I think this is a valid high since it can drain the vaults balance significantly.
+> 
+> As stated in the impact section of the issue, if the price movement to one side is high, there will be a difference between the vaults short and long products collateral balance hence, the more fee to apply. Therefore, calling rebalancing few more times will result in more losses and this will start taking the funding fees that the vault generating. Although at some point it will converge to very small numbers, this will lead to loss of funds for the vault depositors.
+> 
+> 
+> 
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**KenzoAgada**
+
+Hmm...
+I think there is a case for this to be high severity as this will result in a continuous eating up of user funds, if vaults for products with maker fees are launched.
+On the other hand, Perennial doesn't have any products with maker fees at the moment, and so Perennial says that this current iteration of vaults was intentionally not including the handling of that.
+
+**arjun-io**
+
+Similar to #43 this is intended as the added complexity to support something that wasn't likely to be turned on wasn't worth it. These two can likely be judged similarly, although I will say for this issue there is a malicious attack vector where other makers can force the vault to rebalance and thus generate maker fees which they get a cut of, this would necessitate quicker action to add some sort of rebalance/vault fee 
+
+**jacksanford1**
+
+Seems like there's a chance that a significant amount of funds could be lost due to coordinated effort here. 
+
+There are enough contingencies to make it a Medium:
+> high makerFee set by market owner and big collateral balance differences between markets or directional exposure on vault causing the collateral balance differences higher than usual so more funds to rebalance hence more fee to pay
+
+And enough of a risk of material funds being lost in a coordinated attack scenario. 
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+See previous comment. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [mstpr](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/41/#issuecomment-1613299349): rejected
+
+# Issue M-6: BalancedVault.sol: Early depositor can manipulate exchange rate and steal funds 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/46 
 
@@ -513,83 +1136,99 @@ Thereby the attacker cannot manipulate the exchange rate to be so low as to enab
 The inflation attack has been reported and paid out on Immunefi (happy to provide proof here if needed) - we have added a comment describing this attack here: https://github.com/equilibria-xyz/perennial-mono/pull/194
 
 
-# Issue M-5: BalancedVault.sol: V2 upgrade does not implement V1 functions which means users can lose access to their funds 
+**mstpr**
 
-Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/56 
+Escalate for 10 USDC
+I think this is an informational issue.
 
-## Found by 
-roguereddwarf
-## Summary
-The current `BalancedVault` is meant as an upgrade for the current single market implementation of the `BalancedVault`.
+The finding is correct. However, in order this to be applicable, the first depositor needs to be the only depositor in the epoch (first epoch) they deposited. So, it is way harder to pull off this attack than a regular 4626 vault. Considering oracles are updating every 3 hours minimum (heartbeat of chainlink, assuming no price deviation) the attacker needs to be the first depositor for the epoch not the actual first depositor. Protocol team can easily deposit some considerable amount after deployment and mitigate this attack. 
 
-We can see this in the initializer (initializing version 2):
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L113
+**sherlock-admin**
 
-The issue is that shares in the V1 Vault are transferrable
-https://github.com/equilibria-xyz/perennial-mono/blob/5ba9c9fc594cc476e9370bd68eb5ac7fd04bfc10/packages/perennial-vaults/contracts/BalancedVault.sol#L215-L233
+ > Escalate for 10 USDC
+> I think this is an informational issue.
+> 
+> The finding is correct. However, in order this to be applicable, the first depositor needs to be the only depositor in the epoch (first epoch) they deposited. So, it is way harder to pull off this attack than a regular 4626 vault. Considering oracles are updating every 3 hours minimum (heartbeat of chainlink, assuming no price deviation) the attacker needs to be the first depositor for the epoch not the actual first depositor. Protocol team can easily deposit some considerable amount after deployment and mitigate this attack. 
 
-```solidity
-    function transfer(address to, UFixed18 amount) external returns (bool) {
-        _settle(msg.sender);
-        _transfer(msg.sender, to, amount);
-        return true;
-    }
+You've created a valid escalation for 10 USDC!
 
-    /**
-     * @notice Moves `amount` shares from `from to `to`
-     * @param from Address to send shares from
-     * @param to Address to send shares to
-     * @param amount Amount of shares to send
-     * @return bool true if the transfer was successful, otherwise reverts
-     */
-    function transferFrom(address from, address to, UFixed18 amount) external returns (bool) {
-        _settle(from);
-        _consumeAllowance(from, msg.sender, amount);
-        _transfer(from, to, amount);
-        return true;
-    }
-```
+To remove the escalation from consideration: Delete your comment.
 
-However in the V2 implementation the `transfer` and `transferFrom` functions have been removed.
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
 
-## Vulnerability Detail
-The vulnerability can occur because based on V1 the `shares` might be managed by a contract that does not itself have the ability to redeem them.
+**roguereddwarf**
 
-However with the upgrade to V2, the assets corresponding to the shares get lost because the contract would not be able to transfer the shares somewhere else where they can be redeemed.
+Escalate for 10 USDC
 
-## Impact
-Loss of funds because shares could not get redeemed.
+I think this is a valid Medium and disagree with the first escalation.
 
-Note that this scenario does not rely on a user error.
-The shares might be owned by a smart contract and be subject to the logic of the contract. Thereby it's not possible that the smart contract just transfers them somewhere where they can be redeemed before the V2 upgrade.
+First I'd like to comment on the issue that was submitted via Immunefi that the sponsor has linked to.
+The commit has been made on June 16th and the contest ended on June 15th.
+So it is clear that I did not just copy the attack vector from the repo, and this is indeed a valid finding.
+(Just want to make sure there can be no suspicion of me copying the issue)
 
-## Code Snippet
-V2 `BalancedVault`:
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L30
+Furthermore the first escalation explains that this is a tricky attack scenario.
+While true, there is a valid scenario which can occur with realistic on-chain conditions as new Vaults get deployed.
 
-V1 `BalancedVault`:
-https://github.com/equilibria-xyz/perennial-mono/blob/master/packages/perennial-vaults/contracts/BalancedVault.sol
+Also the first escalation pointed out that this could be mitigated by seeding the Vault with some initial funds.
+While this could be a solution, clearly this is not something the sponsor had in mind, specifically since the issue was accepted on Immunefi and there is no mention of seeding the Vault in the docs.
 
-## Tool used
-Manual Review
+What remains therefore is a valid attack path (even though unlikely) leading to a loss of funds.
+So I think this should be a valid Medium.
 
-## Recommendation
-Implement the `transfer` and `transferFrom` functions in the V2 `BalancedVault` such as to not break compatibility.
+**sherlock-admin**
 
+ > Escalate for 10 USDC
+> 
+> I think this is a valid Medium and disagree with the first escalation.
+> 
+> First I'd like to comment on the issue that was submitted via Immunefi that the sponsor has linked to.
+> The commit has been made on June 16th and the contest ended on June 15th.
+> So it is clear that I did not just copy the attack vector from the repo, and this is indeed a valid finding.
+> (Just want to make sure there can be no suspicion of me copying the issue)
+> 
+> Furthermore the first escalation explains that this is a tricky attack scenario.
+> While true, there is a valid scenario which can occur with realistic on-chain conditions as new Vaults get deployed.
+> 
+> Also the first escalation pointed out that this could be mitigated by seeding the Vault with some initial funds.
+> While this could be a solution, clearly this is not something the sponsor had in mind, specifically since the issue was accepted on Immunefi and there is no mention of seeding the Vault in the docs.
+> 
+> What remains therefore is a valid attack path (even though unlikely) leading to a loss of funds.
+> So I think this should be a valid Medium.
 
+You've created a valid escalation for 10 USDC!
 
-## Discussion
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**mstpr**
+
+Thinking more on this, I think I agree this is a valid medium. Although it is harder to make this attack because of the epoch things it is still almost free for attacker to try. So, attacker can just deposit 1 Wei and hope they're the first depositor.
+
+Not deleting my escalation just in case @roguereddwarf escalation stands unresponded and lead him to lose 10 USDC. 
 
 **KenzoAgada**
 
-Essentially report is valid, but practically there are only 2 vaults, and looking at Arbscan there doesn't seem to be any contracts holding vault tokens. (But that's just an eye test, not thorough check).
-But even if so, we also can not guarantee it will stay this way - by the time the vaults will be upgraded, there might be contracts holding tokens. I think medium severity is appropriate.
+Issue should remain medium.
+The escalator also agrees to that, as seen in the previous comment.
 
-**arjun-io**
+**jacksanford1**
 
-We intentionally removed this functionality. We verified that no contracts currently hold tokens, and we'll verify that again before deploying this upgrade.
+Result:
+Medium
+Has duplicates
+See mstpr comment above. 
 
-# Issue M-6: BalancedVault.sol: claim can be impossible due to unsigned integer underflow 
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [roguereddwarf](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/46/#issuecomment-1614293537): accepted
+- [mstpr](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/46/#issuecomment-1613255257): rejected
+
+# Issue M-7: BalancedVault.sol: claim can be impossible due to unsigned integer underflow 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/57 
 
@@ -676,7 +1315,86 @@ Manual Review
 In the `_rebalancePosition` function it must be ensured that the following line does not execute when `claimAmount > _totalAssetsAtEpoch(context)`:
 https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial-vaults/contracts/balanced/BalancedVault.sol#L474
 
-# Issue M-7: Malicious trader can bypass utilization buffer 
+
+
+## Discussion
+
+**sherlock-admin**
+
+> Escalate for 10 USDC
+> I also noticed this issue, thanks to roguereddwarf for good explanation. The reasons for not submitting are as follows:
+> 1. This situation is not permanent. `_rebalance` is called by multiple functions, but only in the `claim` function that `claimAmount` is not 0. So it will not affect `syncAccount`/`deposit`/`redeem`.
+> 2. This happens only after the vault is liquidated. This does make the user lose funds (unable to redeem) if no funds are subsequently deposited(from other users). But shouldn't this user take the risk of liquidation?
+> 
+> So this is not a valid M. I would like to hear everyone's opinion.
+> 
+
+    You've deleted an escalation for this issue.
+
+**roguereddwarf**
+
+Escalate for 10 USDC
+
+I disagree with the first escalation and argue that this should remain a Medium severity issue.
+The situation is not permanent but can only be resolved by the user by sending additional funds (of which the user most likely does not get the majority back because they will also be allocated to other users).
+
+And yes this only happens when the Vault got liquidated as can be seen from my test case as well.
+But this does not take away from the fact that this is a valid scenario.
+Liquidations are part of the normal operation of the Vault, I'm not making any unrealistic assumptions in this report.
+
+Also the user DOES take the risk of liquidation which is reflected by only being able to claim pro-rata.
+But as I have showed the claiming fails altogether so he cannot claim the funds that he is entitled to after the liquidation.
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I disagree with the first escalation and argue that this should remain a Medium severity issue.
+> The situation is not permanent but can only be resolved by the user by sending additional funds (of which the user most likely does not get the majority back because they will also be allocated to other users).
+> 
+> And yes this only happens when the Vault got liquidated as can be seen from my test case as well.
+> But this does not take away from the fact that this is a valid scenario.
+> Liquidations are part of the normal operation of the Vault, I'm not making any unrealistic assumptions in this report.
+> 
+> Also the user DOES take the risk of liquidation which is reflected by only being able to claim pro-rata.
+> But as I have showed the claiming fails altogether so he cannot claim the funds that he is entitled to after the liquidation.
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**securitygrid**
+
+You convinced me, I agree. Thanks. @roguereddwarf
+
+**KenzoAgada**
+
+The original escalation has been deleted.
+All that remains is roguerddwarf's escalation which is valid (as it explained why original escalation was invalid).
+
+No change is needed in issue's status.
+
+**jacksanford1**
+
+Ok, should remain a Medium. 
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+Escalation was deleted.
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [roguereddwarf](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/57/#issuecomment-1614303879): accepted
+
+# Issue M-8: Malicious trader can bypass utilization buffer 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/75 
 
@@ -736,7 +1454,109 @@ This is a good callout and a valid issue but since the _impact_ existed before t
 In addition to the sponsor's comment, also worth noting that a malicious user will not gain anything from doing this.
 Indeed seems like medium severity is more appropriate. Downgrading to medium.
 
-# Issue M-8: A trader close to liquidation risks being liquidated by trying to reduce her position 
+**sherlock-admin**
+
+> Escalate for 10 USDC
+> 
+> The assumption here is that Alice can close position immediately. However, in order to close a position Alice needs to wait the settlement and the meanwhile Alice can occur losses or profit. This is not a safe operation for Alice to do. Alice can do this if she is willing to take the risk. I think the utilization buffer works as intented in this scenario, where it forces Alice to create a maker position in order to create a taker position first and since Alice can't withdraw immediately she is subject to her maker positions pnl for at least an oracle version.
+> 
+> I think this an invalid issue 
+
+    You've deleted an escalation for this issue.
+
+**SergeKireev**
+
+>The assumption here is that Alice can close position immediately. However, in order to close a position Alice needs to wait the settlement and the meanwhile Alice can occur losses or profit. This is not a safe operation for Alice to do. Alice can do this if she is willing to take the risk. I think the utilization buffer works as intented in this scenario, where it forces Alice to create a maker position in order to create a taker position first and since Alice can't withdraw immediately she is subject to her maker positions pnl for at least an oracle version.
+
+>I think this an invalid issue
+
+The described operation can be done atomically because the invariant `takerInvariant` which is bypassed here checks only next amounts, and so Alice does not in fact need to expose herself to the market (She can just fill all maker capacity before Bob's transaction, and close after the tx and before next settlement)
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L535-L544
+
+
+**mstpr**
+
+> > The assumption here is that Alice can close position immediately. However, in order to close a position Alice needs to wait the settlement and the meanwhile Alice can occur losses or profit. This is not a safe operation for Alice to do. Alice can do this if she is willing to take the risk. I think the utilization buffer works as intented in this scenario, where it forces Alice to create a maker position in order to create a taker position first and since Alice can't withdraw immediately she is subject to her maker positions pnl for at least an oracle version.
+> 
+> > I think this an invalid issue
+> 
+> The described operation can be done atomically because the invariant `takerInvariant` which is bypassed here checks only next amounts, and so Alice does not in fact need to expose herself to the market (She can just fill all maker capacity before Bob's transaction, and close after the tx and before next settlement) https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L535-L544
+
+You are correct, sorry for the misunderstanding of the scenario you described above. Deleting my escalations comment 
+
+**mstpr**
+
+Escalate for 10 USDC
+
+I rethought of the issue and I think this is a low issue.
+
+Issue does not add any benefits to the user and in fact, it is even discouraging for the user to not take this action due to the funding fee increase. Since the funding fee follows a curve model the funding fee will be taken at 100% utilization is quite high and it is not a good thing that any taker would want. There are no funds in danger and there isn't any benefits of doing such thing. 
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I rethought of the issue and I think this is a low issue.
+> 
+> Issue does not add any benefits to the user and in fact, it is even discouraging for the user to not take this action due to the funding fee increase. Since the funding fee follows a curve model the funding fee will be taken at 100% utilization is quite high and it is not a good thing that any taker would want. There are no funds in danger and there isn't any benefits of doing such thing. 
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**KenzoAgada**
+
+Hmm... Rethinking about the issue, I admit it might not be enough for medium severity. Leaving for Sherlock to decide.
+
+**jacksanford1**
+
+Impact from issue:
+> Any trader can bring the utilization up to 100%, and use that to DoS withdrawals from Products and Balanced vaults for an indefinite amount of time.
+> This is especially critical for vaults, since when any product related to any market is fully utilized, all redeems from the balanced vault are blocked.
+
+Based on Sherlock's DOS rules:
+https://docs.sherlock.xyz/audits/judging/judging#some-standards-observed
+
+Doesn't seem like this should be a valid Medium. @cergyk would need to explain how the attack can be profitable for the attacker or show a difference between cost incurred and damage created that is many orders of magnitude. 
+
+**SergeKireev**
+
+> @CergyK would need to explain how the attack can be profitable for the attacker or show a difference between cost incurred and damage created that is many orders of magnitude.
+
+Due to the nature of BalancedVault, multiple markets of different nature are linked together. If one is fully utilized, it blocks the BalancedVault for all of the markets as stated in the initial report:
+> This is especially critical for vaults, since when any product related to any market is fully utilized, all redeems from the balanced vault are blocked.
+
+So there can indeed be a magnitude between cost incurred and damage created. 
+
+Suppose Balanced Vault on markets:
+- .$PEPE with 100$ worth of liquidity 
+- .$ETH with 1.000.000$ of liquidity
+
+Malicious user Alice would only have to fully utilize 100$ on the .$PEPE market to block 1.000.000$ in redeemable assets on $ETH because the two markets are linked by the BalancedVault
+
+**jacksanford1**
+
+Thanks @SergeKireev. Agree in that case the cost could be very low for a DOS of significant magnitude. I don't think it's a High, but it seems like it's worthwhile to make this a Medium. 
+
+Open to arguments from @mstpr on why it should be Low instead. 
+
+**jacksanford1**
+
+Result:
+Medium
+Has duplicates 
+Based on argument from Serge and no follow-up response from mstpr, leaving this as a Medium. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [mstpr](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/75/#issuecomment-1615259598): rejected
+
+# Issue M-9: A trader close to liquidation risks being liquidated by trying to reduce her position 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/76 
 
@@ -783,7 +1603,179 @@ Either:
 or
 - Enforce `maintenanceInvariant` on closing of positions, to make transaction revert (except when closing is liquidation already)
 
-# Issue M-9: User would liquidate his account to sidestep `takerInvariant` modifier 
+
+
+## Discussion
+
+**SergeKireev**
+
+Escalate for 10 USDC
+
+Disagree with downgrading of severity.
+Although it can be argued the loss of funds is self-inflicted, reducing the position when near liquidation is the most reasonable choice to avoid liquidation.
+Instead of avoiding the liquidation, the user makes himself instantly liquidatable and risks losing 5% to 10% of collateral, which can be an unbounded loss of funds.
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> Disagree with downgrading of severity.
+> Although it can be argued the loss of funds is self-inflicted, reducing the position when near liquidation is the most reasonable choice to avoid liquidation.
+> Instead of avoiding the liquidation, the user makes himself instantly liquidatable and risks losing 5% to 10% of collateral, which can be an unbounded loss of funds.
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**sherlock-admin**
+
+> Escalate for 10 USDC
+> This is not valid M.
+> In this situation on the verge of liquidation, no matter what you do, if the price moves in the direction of loss, the liquidation will occur. On the contrary, the position is safe. This is a normal phenomenon. The safe thing to do is to increase the margin.
+
+    You've deleted an escalation for this issue.
+
+**mstpr**
+
+Escalate for 10 USDC
+
+I think this issue is invalid or informational.
+
+First of all, that's a great point. However, I feel like that the users should be aware of this already. Maker/taker fees are actually the open/close position fees which they should be aware all the time. So, if a user closes some of their position they should know that there is a fee that they need to pay. If that fee takes them to liquidation level, this should be ok because that's how the system works. 
+
+Here how I see the case: 
+In a product with both open/close position fees;
+If a user with a perfectly healthy position wants to leverage its position, they will pay an open position fee which is acceptable. When the same users wants to deleverage, it's also acceptable to take the close position fee. However, just because the deleverage now puts the user in liquidation, why is it not acceptable to take the close position fees? I think this is how the system works. Just because user is liquidatable after the position fees shouldn't mean that the protocol should not take fees from their action.
+
+
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I think this issue is invalid or informational.
+> 
+> First of all, that's a great point. However, I feel like that the users should be aware of this already. Maker/taker fees are actually the open/close position fees which they should be aware all the time. So, if a user closes some of their position they should know that there is a fee that they need to pay. If that fee takes them to liquidation level, this should be ok because that's how the system works. 
+> 
+> Here how I see the case: 
+> In a product with both open/close position fees;
+> If a user with a perfectly healthy position wants to leverage its position, they will pay an open position fee which is acceptable. When the same users wants to deleverage, it's also acceptable to take the close position fee. However, just because the deleverage now puts the user in liquidation, why is it not acceptable to take the close position fees? I think this is how the system works. Just because user is liquidatable after the position fees shouldn't mean that the protocol should not take fees from their action.
+> 
+> 
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**SergeKireev**
+
+> Escalate for 10 USDC
+> 
+> I think this issue is invalid or informational.
+> 
+> First of all, that's a great point. However, I feel like that the users should be aware of this already. Maker/taker fees are actually the open/close position fees which they should be aware all the time. So, if a user closes some of their position they should know that there is a fee that they need to pay. If that fee takes them to liquidation level, this should be ok because that's how the system works. 
+> 
+> Here how I see the case: 
+> In a product with both open/close position fees;
+> If a user with a perfectly healthy position wants to leverage its position, they will pay an open position fee which is acceptable. When the same users wants to deleverage, it's also acceptable to take the close position fee. However, just because the deleverage now puts the user in liquidation, why is it not acceptable to take the close position fees? I think this is how the system works. Just because user is liquidatable after the position fees shouldn't mean that the protocol should not take fees from their action.
+> 
+> 
+
+Great point as well. This report does not argue that the protocol should not take a fee in that case, just that it should be taken at next settlement (like funding fees for example).
+The user reduces position, fee is deducted upon next settlement, and the user is never liquidatable, everybody is happy
+
+The situation described in this report arises from the fact that collateral handling is not consistent:
+open/close fee is subtracted right away, and all other collateral/position modifications occur at next settlement
+
+
+**KenzoAgada**
+
+I think the various points above show why a medium severity is appropriate.
+
+On one hand it is self inflicted, limited in scope, and depends upon a user not leaving any room for error (price movements/fees) at all, so I don't think it deserves high severity.
+
+On the other hand, it is unintuitive that partially closing a dangerous position should make you liquidatable right away. I think there _is_ a seeming inconsistency in the fact that position fees are deducted right away and can make a position that was already safe in the current version liquidatable. When withdrawing collateral there is a check that the user has enough collateral for maintenance of current version, but there's no such check in the scenario this issue describes.
+
+I would maintain medium severity.
+
+**jacksanford1**
+
+@mstpr Thoughts on the above comments? Seems like it's the ordering of not taking the fee at next settlement?
+
+**mstpr**
+
+@jacksanford1 I would say it is probably not possible or not a secure way to do that. I would love to hear the protocol teams response on that since taking the fee after settlement or before settlement is their design choice. In my opinion, it looks too risky or undoable to take the fee after settlement so that's why they went for this implementation. 
+
+**SergeKireev**
+
+@jacksanford1 @mstpr additional remarks:
+- It is understood that unifying this fees handling is a bit more than a trivial fix. A temporary solution could just to add an invariant which checks if the user becomes liquidatable by doing this call and revert in that case.
+
+- There is another really weird quirk with current implementation: If the user goes through the scenario outlined in the report, and closes his position entirely, the liquidator just takes some of the collateral without providing any utility.
+
+Indeed the positions are already being closed, so this call is a noop:
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L362-L372
+
+The liquidator does not help the protocol but takes a potentially hefty fee at the expense of an innocent user.
+
+**jacksanford1**
+
+@mstpr @SergeKireev I hear your points on the difficulty of the fix, but the difficulty of the fix should not have an effect on the severity of the issue. 
+
+Is there an argument for why this issue is invalid? @mstpr 
+
+And what is the argument for High vs. Medium @SergeKireev (after seeing Kenzo's latest comment)?
+
+**SergeKireev**
+
+> @mstpr @SergeKireev I hear your points on the difficulty of the fix, but the difficulty of the fix should not have an effect on the severity of the issue.
+> 
+> Is there an argument for why this issue is invalid? @mstpr
+> 
+> And what is the argument for High vs. Medium @SergeKireev (after seeing Kenzo's latest comment)?
+
+My argument for saying this should be `High` is an assessment of impact and probability:
+- Impact: Loss of user funds for a large amount (The whole amount of collateral of the user).
+- Probability:
+If the user is on the brink of liquidation, closing or reducing her position seems like the most sensible action.
+With regards to latest @KenzoAgada comment, a user does not necessarily need to open a 50x (max leverage) position, he can also get into this situation simply by accumulating negative uPnl
+
+**mstpr**
+
+I am still seeing this issue as a design choice. Users are aware that there is a maker fee and it's updatable by the protocol team. Traders should always be cautious on their position and maintain it, that's their responsibility and that's a risk they took by taking the position. If user doesn't want to get liquidated, they can add some collateral and deleverage in the current design. It's not that the user has no other ways to dodge liquidation.  @jacksanford1 @SergeKireev 
+
+
+
+
+
+**jacksanford1**
+
+Thanks @SergeKireev @mstpr 
+
+I see it pretty clearly as a Medium. This is not a "blackhat can exploit the whole protocol" type of magnitude, it's just one user who is likely already near the brink of liquidation. 
+
+But I think the issue is real and worth potentially fixing (or at least knowing about) because it could have a very negative unintended effect for a user who wants to derisk their position. 
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+Please see above comment for full reasoning. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [SergeKireev](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/76/#issuecomment-1614702123): rejected
+- [mstpr](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/76/#issuecomment-1615195887): rejected
+
+# Issue M-10: User would liquidate his account to sidestep `takerInvariant` modifier 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/77 
 
@@ -886,116 +1878,266 @@ Consider implementing any of these:
 
 This is working as intended. The market dynamics (namely funding rate curve) should incentivize more makers to come into the market in this case, although it is possible for a malicious maker to temporarily increase funding rates in situations where there is not other LPs (or vaults).
 
-# Issue M-10: Liquidating an account may cause collateral balance of the account to go below `minCollateral` 
+**mstpr**
 
-Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/103 
+Escalate for 10 USDC
+
+I think this is an invalid issue. 
+
+First of all, it's a great example. However, I would consider this as a great trader than an attacker. There are many assumptions and too many risk factors to pull of such thing and it is definitely a very custom scenario. 
+
+Whale deposits tons of maker position and waits for utilization to come to 80%. Since this is very unlikely to happen in a block it will happen over time and meanwhile whale is subject to risk for the entire time since makers are taking the opposite direction of the trade. If everything goes well to plan then whale can pull off this action which again in order to do that whale needs to liquidate itself which is another risk. I think there are too much custom assumptions that are most likely never happens in real world scenarios. 
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I think this is an invalid issue. 
+> 
+> First of all, it's a great example. However, I would consider this as a great trader than an attacker. There are many assumptions and too many risk factors to pull of such thing and it is definitely a very custom scenario. 
+> 
+> Whale deposits tons of maker position and waits for utilization to come to 80%. Since this is very unlikely to happen in a block it will happen over time and meanwhile whale is subject to risk for the entire time since makers are taking the opposite direction of the trade. If everything goes well to plan then whale can pull off this action which again in order to do that whale needs to liquidate itself which is another risk. I think there are too much custom assumptions that are most likely never happens in real world scenarios. 
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**flowercrimson**
+
+I think the issue is valid. It points to opportunities to exploit during liquidation because market liquidity protection is completely bypassed.
+
+The escalation is incorrect in saying that whales are discouraged/unlikely to perform such attacks because of the risks of losing to traders. All makers and traders have risks losing to each other, just because there is inherent risk in trading, doesn’t prevent one from becoming a maker. In addition, makers will also be further compensated with position fees. 
+
+To me, this issue provides a possible scenario where makers can be malicious and there could be more than one malicious makers. 
+
+Funding rates might not be sufficient when there are no other LPs, and also because it is designed under the assumption that  `takerOI>makerOI` are edge cases and ‘very rare situations’ according to docs. When whale makers can be liquidated in a malicious manner, `takerOI>makerOI` is no longer edge case, it would become a regular occurrence for malicious makers to profit, creating cycles of penalization on takers.
+
+**KenzoAgada**
+
+I think the submission is valid and I agree with flowercrimson's points above.
+
+Additionally, the original escalation said:
+> I would consider this as a great trader than an attacker
+
+This reminds me of the Mango Markets exploit, where the exploiter called it _"a very profitable trading strategy"_... Yes, there was no smart contract hack or bug, but the economics allowed manipulation.
+The situation is not the same here, but there is similarity. The issue throws light on a possible strategy that subverts protocol expectations for fair functioning. I think that the scenario that Emmanuel described is not unlikely enough to be totally dismissed.
+This will cause unsuspecting users to lose funds (pay fees) in a way the protocol didn't intend to (which is why there is `takerInvariant`).
+Even if the protocol "accepts the risk", I think this is a good finding that deserves to be pointed out.
+So I think the first escalation is invalid and a medium severity is appropriate.
+
+**jacksanford1**
+
+@mstpr Anything else to add after seeing @flowercrimson and @KenzoAgada's responses?
+
+**mstpr**
+
+@jacksanford1 The reason why I said great trader than an attacker is because this scenario is not a planned attack scenario. This is a very custom scenario overall. 
+
+I think the main problem described here is that, in some cases where it is not possible to exit the market users may put theirselves to liquidation and hope to liquidate themselves to exit the market. Which is correct. However, can you block this from happening? 
+
+User can't decrease their collateral to a level where they are liquidatable. They can decrease the collateral up to liquidation threshold + 1 at minimum. Then, since the market is reporting in settlements, user needs and hopes that the price declines tiny bit more such that the next settlement user is liquidatable. Meanwhile, user needs to make sure that he will be able to liquidate hisself. If someone else liquidates the position, there is no profit or benefit of doing this action. If there is a robust liquidator community then user takes a great risk.
+
+I would say this is valid if only user could have done this actions in 1 tx.
+User notices he can't exit the market. Reduce some collateral and liquidates hisself in 1 tx.
+
+I think everything works as intended. User doesn't close the position here, user decrease its collateral and hopes to liquidate itself before others. 
+
+Another take to the issue:
+Whale above scenario might say "I don't care about who liquidates me and takes the liquidation fee I need to exit this position because being a maker in current market will be worse than me to just give up the liquidation fee right now" . Well, obviously this is a trading choice of the whale then. Pay the liquidation fee and exit your position our wait for the utilization to go down and exit your position. 
+
+**jacksanford1**
+
+@flowercrimson @KenzoAgada Any response to @mstpr's latest comment?
+
+**Emedudu**
+
+The issue here is that `takerInvariant` modifier will not serve its intended purpose.
+
+`takerInvariant` modifier was put in place to ensure that open maker positions does not go lower than open taker positions.
+
+Of course, it is the right of users to close their open positions, but according to Perennial's rules(`takerInvariant` modifier), they shouldn't be able to close their positions such that the global open positions will be less than global taker positions. 
+
+I don't think protocol would have added `takerInvariant` to `closeMakeFor` function if they are comfortable with global maker positions dropping below taker positions.
+
+>The reason why I said great trader than an attacker is because this scenario is not a planned attack scenario. This is a very custom scenario overall.
+
+The protocol put `takerInvariant` in place to prevent this scenario from happening, whether it was a planned attack scenario or not.
+
+But now, instead of using the normal door way, which is `closeMakeFor` function (which would enforce the rules and restrict a user from closing his position), User goes through "liquidation" door way(which would have about same effect as `closeMakeFor` and bypass the rules).
+
+This would also lead to HIGH funding fees which would be unfair to all open taker positions.
+
+**KenzoAgada**
+
+@mstpr in your reply you kind of reframed the discussion to about "user may want to liquidate themselves to exit the market". But what you haven't touched upon in your explanation is the problem of the forced high funding fee.
+Looking at the original issue's example, the whale can "force" takers to pay the maximum high maxRate.
+He can then take another maker position himself and make himself the beneficiary of the payment.
+Isn't this valid as a possible attack path (/a very profitable trading strategy 🙂)?
+
+I understand there are some requirements, such as no other large maker positions and the attacker/trader liquidating himself (though depending on params that might be less necessary). So it's not a high severity issue. And I understand that the sponsor says this is working as intended and the market _should_ take care of it. But _should_ does not guarantee it... It seems to me that the issue describes a valid possible oversight/exploit of the mechanism.
+
+**jacksanford1**
+
+@arjun-io Do you still feel the same way about this issue?
+
+**arjun-io**
+
+Our view is this is working as intended as per my initial comment (reposted below). Part of a healthy market is numerous LPs (directly or indirectly through the vault). 
+
+> This is working as intended. The market dynamics (namely funding rate curve) should incentivize more makers to come into the market in this case, although it is possible for a malicious maker to temporarily increase funding rates in situations where there is not other LPs (or vaults).
+
+One note: The protocol+market can receive a portion of the close fees which would disincentivize this behavior (similar to the liquidation fee share as described in the recommendation). Capping LPs as a % of the maker limit doesn't really achieve anything, as it creates a bad UX for good actors and bad actors can simply split positions across multiple accounts
+
+
+**jacksanford1**
+
+This is a really tricky issue. I think the Mango Markets example actually doesn't apply here, and if this were an issue similar to Mango Markets then it would be Low. The Mango Markets exploit was poorly chosen collateral (MNGO token) and/or a poorly chosen LTV for that collateral. Those are not smart contract issues, and the Mango Markets protocol actually functioned exactly as it was intended to function from a smart contract perspective. 
+
+But coming back to the original Impact of this issue:
+
+> User will close his maker position when he shouldn't be allowed to, and it would cause open taker positions to be greatly impacted. And those who are not actively monitoring their open taker positions will suffer loss due to high funding fees.
+
+If it's true that the user shouldn't be allowed to close his position (i.e. not an intended functionality of the smart contracts) AND if it's true that it could cause potentially large losses for other users, then it should be a Medium. 
+
+Unless there is further discussion around either of those aspects (intended functionality or loss potential to users) then this should be a Medium imo. 
+
+
+
+**jacksanford1**
+
+Result:
+Medium
+Has duplicates
+See previous message for reasoning. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [mstpr](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/77/#issuecomment-1613235685): rejected
+
+# Issue M-11: Leveraged trader with small collateral can create a riskless position until settlement 
+
+Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/104 
 
 ## Found by 
-Emmanuel
+cergyk
 ## Summary
-There is a minimum collateral that is set in the Controller contract. This disallows users from depositing collateral that would make collateral balance less than minimum Collateral, and prevents withdraws that would make the collateral balance less than minimum collateral.
-This issue explains how an account can cause his collateral balance to go below the minCollateral and even open positions with it, hence defeating the purpose of minCollateral
+A highly leveraged trader (around max leverage) with small collateral can autoliquidate position to create a riskless position
 
 ## Vulnerability Detail
-Here is how the protocol calculates the liquidation fee that would be deducted from the account.
-```solidity
-UFixed18 liquidationFee = controller().liquidationFee();
-UFixed18 collateralForFee = UFixed18Lib.max(totalMaintenance, controller().minCollateral());
-UFixed18 fee = UFixed18Lib.min(totalCollateral, collateralForFee.mul(liquidationFee)); 
-_products[product].debitAccount(account, fee);
-```
-The `fee` is the minimum of `totalCollateral` and `collateralForFee.mul(liquidationFee)` which means that if fee is not `totalCollateral`, there is a possibility that the fee could be large enough to make `totalCollateral` fall below `minCollateral`
+As we can see in closeTake function:
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L246-L256
 
-Consider this scenario:
-- There is ETH-long product on Ethereum Mainnet with following configurations:
-    - minimum collateral of 100 USDC
-    - liquidation fee = 20%
-    - maintenance=0.05, max leverage=20
-    - ETH price=$1750
-- UserA deposit collateral of 100 USDC(equal to min collateral)
-- UserA opens maker position of 1.143ETH at 20x leverage
-- Price of ETH rises to $1800 so account immediately becomes liquidatable because account used max leverage
-- UserA liquidates his account:
-    - collateralForFee=max((1800 * 1.143 * 0.05),100)=$102.87
-    - fee=min(100,(102.87 * 20%))=$20.574
-- liquidation fee that would be deducted from UserA's collateral balance is $20.574
-- UserA's account balance=100-20.574=$79.43 which is less than minCollateral of $100
-- UserA can now open new positions using his collateral balance that is less than minCollateral
+- maintenanceInvariant is not enforced, meaning that extraction of `takerFee` can make the position go unhealthy
 
-One of the purposes of minCollateral is to allow for gas costs that would cover liquidation.
-- UserA can calculate a collateral balance(liquidationBalance) that would be less than gas costs on ethereum to dissuade liquidators from liquidating his account even when his collateral balance is well below the required maintenance.
-- UserA opens a position using max leverage to make his account easily liquidatable
-- UserA liquidates his account to make his collateral balance=liquidationBalance
-- UserA would open positions using liquidationBalance as collateral, and be rest assured that liquidators won't want to liquidate his account.
+And in `liquidate`:
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/collateral/Collateral.sol#L128-L129
 
-NOTE: There is no strict mechanism to liquidate account when it falls below minCollateral
+- minimum liquidation incentive equals `liquidationFee*minCollateral`.
+Which is constant and equal to 0.5 DSU on arbitrum products such as:
+https://arbiscan.io/address/0x5E660B7B8357059241EAEc143e1e68A5A108D035
+
+We can deduce that a highly leveraged trader, with very small collateral (0.5 DSU) can create a riskless position lasting until next settlement by auto liquidating.
+
+Example:
+Maintenance factor is 2%
+Liquidation fee is 5%
+Taker fee is 0.1%
+Funding fee is 0%
+
+Alice has a 50x leverage `taker` position opened as authorized per maintenance invariant:
+
+Alice collateral: 0.5 DSU
+Alice taker position: notional of 25 DSU
+
+To create the riskless position Alice does in the same tx:
+- closes the taker position (and by paying the `takerFee` makes her position instantly liquidatable)
+- liquidates her position withdrawing the whole 0.5 DSU collateral
+
+For the rest of the oracle version Alice has a 25 DSU position with 0 collateral. 
+Which means that in the end of the period: 
+- if positive Pnl: 
+    Alice gets it added to her collateral, and can withdraw some gains
+- if negative Pnl:
+    It gets induced upon the protocol as shortfall:
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/collateral/types/OptimisticLedger.sol#L62-L73
+
+If Alice has multiple such positions on multiple accounts, considerable amounts can be stolen this way from the protocol.
 
 ## Impact
-A user can cause his collateral balance to be any value, even below minCollateral. With this power, he can make his collateral balance such that there would be no incentive to liquidate it.
-Now, even when massive changes in Product's token price causes his collateral balance to be far less than the maintenance required, User's account may not be liquidated as there are no incentives.
+Alice obtains a riskless position, inducing potential shortfall on the protocol
 
 ## Code Snippet
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/collateral/Collateral.sol#L126-L132
-
 
 ## Tool used
-
 Manual Review
 
 ## Recommendation
-Create a mapping called "unused collateral"
-When liquidating an account, if deducting liquidation fee causes account's balance to be less than minCollateral, increment the account's "unused collateral" balance by the account's balance, and change the `OptimisticLedger` balance of that account to 0.
-The "unused collateral" balances should not be used in any internal accounting, and should be claimable by the user at anytime.
-
-# Issue M-11: Position fees will cause collateral balance of an account to go below `minCollateral` 
-
-Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/123 
-
-## Found by 
-Emmanuel
-## Summary
-There is a minimum collateral that is set in the Controller contract. This disallows users from depositing collateral that would make collateral balance less than minimum Collateral, and prevents withdraws that would make the collateral balance less than minimum collateral.
-This issue explains how an account can cause his collateral balance to go below the minCollateral and even open positions with it, hence defeating the purpose of minCollateral
-
-## Vulnerability Detail
-Opening a position debits a takerFee or makerFee, depending on the position opened, from the collateral balance, and then checks if the collateral will be enough after the next settlement.
-The problem is that the functions do not check if the collateral balance, after deducting the fees, is more than minCollateral. This would allow the following:
-- User deposits collateral that is just a little above minCollateral
-- User opens and closes positions, so position fees makes the balance less than minCollateral
-- User repeats above step till his balance reaches the point when liquidators pay a higher gas fee than the liquidation fee he would receive
-- User opens a risky position, but liquidators will be dissuaded from liquidating it
-
-One of the purposes of minCollateral is to allow for gas costs that would cover liquidation.
-- User can calculate a collateral balance(liquidationBalance) that would be less than gas costs on ethereum to dissuade liquidators from liquidating his account even when his collateral balance is well below the required maintenance.
-- User would then open and close a position that would make his collateral balance liquidationBalance after fees are deducted
-- User would open positions using liquidationBalance as collateral, and be rest assured that liquidators won't want to liquidate his account.
-
-NOTE: There is no strict mechanism to liquidate account when it falls below minCollateral
-## Impact
-A user can cause his collateral balance to be any value, even below minCollateral. With this power, he can make his collateral balance such that there would be no incentive to liquidate it.
-Now, even when massive changes in Product's token price causes his collateral balance to be far less than the maintenance required, User's account may not be liquidated as there are no incentives for doing so.
-
-## Code Snippet
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L225
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L266
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L307
-https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/product/Product.sol#L349
-
-## Tool used
-
-Manual Review
-
-## Recommendation
-- Allow liquidation of an account whose collateral balance has fallen below minCollateral.(This would take care of instances when fundingFees causes the collateral balance to fall below minCollateral)
-- Alternatively, Create a modifier in openMake and openTake founctions that ensures that after debiting the open+close position fees, the collateral balance does not fall below minCollateral
+Do not add positive Pnl to the collateral of an account if it does not have any collateral (to enforce the invariant: A position can not be without risk)
 
 
 
 ## Discussion
 
+**SergeKireev**
+
+Escalate for 10 USDC
+
+It seems this issue has been deemed non-valid because of the minCollateral requirement.
+
+However in current setup on arbitrum (funding fees == 0), it is actually easy to create two opposite positions (one long and one short) with exactly `MIN_COLLATERAL`, such that the sum of the values stays constant. 
+One of these is very likely to end up close to 10% of MIN_COLLATERAL (since when one position increases collateral, the other decreases collateral).
+
+When that happens, the attacker can use the technique described in this report to create a riskless position until next settlement and effectively steal from other users of the market
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> It seems this issue has been deemed non-valid because of the minCollateral requirement.
+> 
+> However in current setup on arbitrum (funding fees == 0), it is actually easy to create two opposite positions (one long and one short) with exactly `MIN_COLLATERAL`, such that the sum of the values stays constant. 
+> One of these is very likely to end up close to 10% of MIN_COLLATERAL (since when one position increases collateral, the other decreases collateral).
+> 
+> When that happens, the attacker can use the technique described in this report to create a riskless position until next settlement and effectively steal from other users of the market
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**KenzoAgada**
+
+@arjun-io can you please read and share your perspective?
+
 **arjun-io**
 
-This is a good callout - the minCollateral value should be set to give ample buffer to allow for safe liquidations even if the balance falls below this but it is a good case to note.
+This does appear to be possible, although the work required here to get the position at minCollateral is quite a bit. The attacker will be paying 4x open/close fees in order to get their position into this state - and the most efficient way to get to this sub-minCollateral position is by opening opening highly levered positions which will increase the fee 
+
+I would consider this a valid medium 
+
+**jacksanford1**
+
+Since protocol team validates it as possible, seems like this should be a valid Medium. Funds are risk seems potentially too small, but this type of attack could cause a chain reaction once everyone else realizes they are losing small amounts of funds quickly. 
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+Valid Medium based on Arjun's last comment. This issue is very similar to #103 but I could not make quite enough of a case to duplicate them. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [SergeKireev](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/104/#issuecomment-1612729627): accepted
 
 # Issue M-12: Accounts will not be liquidated when they are meant to. 
 
@@ -1142,6 +2284,137 @@ Suspected as much but wanted to make sure... Closing as invalid.
 
 After internal discussion: the issue is valid, but the watson didn't fully identify the exact complex edge case where it will materialize. Therefore downgrading to medium severity.
 
+**mstpr**
+
+Escalate for 10 USDC
+
+I am not sure what's the edge case, it is straightforward.
+
+A vault is synced with its underlying product as long as it is interacting with its products. A product can advance more oracle versions while vault still outdates with another one if there isn't any interactions been made in due time. At the end of the _settle function the correct and the most updated oracle version is synced. However, just in the settlement process vault only checks the latest synced version of its and the one after that (which there might not be a +1 version due to skipping). 
+
+If a product has in version 12 and the previous version of it was 10 (means that product skipped version 11 and went directly to version 12) and the vaults latest synced version is 10 (no interactions made with vault so vault still thinks the latest version of the product is 10), the next time someone calls deposit/redeem/claim or in general anything that would trigger the settlement process, the accumulated assets at that epoch will be calculated as follows:
+
+products latest version of the underlying product is 10. So _accumulatedAtEpoch will calculate the balance respect to oracle version 10 and 11. However, there is no version 11, and default it will be 0 and since the latest version of the product (12) > 10 (latest synced oracle version of vault) the accounting will be mess. Since there is no oracle version 11, the accumulated balance will be calculated as the negative of version 10. If the epoch is stale, there can be deposits/redeems/claims in the latestEpoch and when the sync() happens the accounting will go off.
+
+Also, this is directly related with user funds and huge losses can be reported, so I think this is a valid high. 
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I am not sure what's the edge case, it is straightforward.
+> 
+> A vault is synced with its underlying product as long as it is interacting with its products. A product can advance more oracle versions while vault still outdates with another one if there isn't any interactions been made in due time. At the end of the _settle function the correct and the most updated oracle version is synced. However, just in the settlement process vault only checks the latest synced version of its and the one after that (which there might not be a +1 version due to skipping). 
+> 
+> If a product has in version 12 and the previous version of it was 10 (means that product skipped version 11 and went directly to version 12) and the vaults latest synced version is 10 (no interactions made with vault so vault still thinks the latest version of the product is 10), the next time someone calls deposit/redeem/claim or in general anything that would trigger the settlement process, the accumulated assets at that epoch will be calculated as follows:
+> 
+> products latest version of the underlying product is 10. So _accumulatedAtEpoch will calculate the balance respect to oracle version 10 and 11. However, there is no version 11, and default it will be 0 and since the latest version of the product (12) > 10 (latest synced oracle version of vault) the accounting will be mess. Since there is no oracle version 11, the accumulated balance will be calculated as the negative of version 10. If the epoch is stale, there can be deposits/redeems/claims in the latestEpoch and when the sync() happens the accounting will go off.
+> 
+> Also, this is directly related with user funds and huge losses can be reported, so I think this is a valid high. 
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**securitygrid**
+
+Comment from a waston:
+```
+/**
+     * @notice Rebalances the collateral and position of the vault without a deposit or withdraw
+     * @dev Should be called by a keeper when a new epoch is available, and there are pending deposits / redemptions
+     */
+    function sync() external {
+        syncAccount(address(0));
+    }
+```
+`sync()` Should be called by a keeper when a new epoch is available. If the keeper is running normally, there will be no such assumptions in the report: `if a product's latest version is 20 and the current version is 23`. Because sync() will call product._settle internally. 
+so the above scenario will not happen.
+
+**mstpr**
+
+> ```
+> /**
+>      * @notice Rebalances the collateral and position of the vault without a deposit or withdraw
+>      * @dev Should be called by a keeper when a new epoch is available, and there are pending deposits / redemptions
+>      */
+>     function sync() external {
+>         syncAccount(address(0));
+>     }
+> ```
+> 
+> 
+>     
+>   
+> 
+> sync() Should be called by a keeper when a new epoch is available. so the above scenario will not happen.
+
+Product advances an oracle version and vault syncs. 
+
+When a product advances to version 12 from 10 by skipping version 11 (which is possible if there are no open positions in version 10) 
+
+and if the epoch is stale there can be deposits made by users.
+
+Now, even if keeper would call the sync() after 1 second the above scenario is consistent. 
+
+**KenzoAgada**
+
+I don't have a lot to add on this escalation.
+On one hand, it seems the watson identified a valid critical issue.
+On the other hand, if I understand the sponsor correctly, they said that report was not very useful or detailed nor enough to really understand and fix the problem.
+Up to Sherlock to decide severity.
+
+**jacksanford1**
+
+@securitygrid Are you satisfied with @mstpr's last response?
+
+I don't believe the likelihood and severity potential for this issue combine to warrant a High. 
+
+However it seems to be a legitimate issue (or very close to describing one) and so it seems like a Medium. 
+
+**securitygrid**
+
+If the keeper is working, why is there a delay of 2 versions?
+
+**jacksanford1**
+
+I guess @mstpr can answer that best
+
+**mstpr**
+
+I don't think you get the issue here @securitygrid. As stated above, vaults and products separate things. Product advance a version first then vault syncs.
+
+Vault only advances a version if the underlying products advances to the next version. It is completely not about keepers.
+If marketA (2 products, long and short) and marketB (2 products, long and short) are in oracle version 3 and vault is in epoch 2,
+when marketA advances to version 3 but marketB is still in version 2, the vault is still in epoch2, vault can't advance to epoch3 before marketB is advanced to version 3 aswell. 
+
+
+
+
+
+
+
+**jacksanford1**
+
+@securitygrid Any thoughts on mstpr's latest comment?
+
+**jacksanford1**
+
+Result:
+Medium
+Unique
+> On one hand, it seems the watson identified a valid critical issue.
+> On the other hand, if I understand the sponsor correctly, they said that report was not very useful or detailed nor enough to really understand and fix the problem.
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [mstpr](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/152/#issuecomment-1612941681): rejected
+
 # Issue M-14: Users can be forced to claim assets at bad rate in some cases 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/174 
@@ -1175,7 +2448,155 @@ While the general claim pro-rata mechanism has already been reported in the Veri
 
 This is a great find. We will think about whether or not we want to fix this as the unpermissioned claim is currently used by the protocol for better UX with the MultiInvoker
 
-# Issue M-15: `BalancedVault` doesn't consider potential break in one of the markets 
+# Issue M-15: Liquidators can prevent users from making their positions healthy during an unpause 
+
+Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/190 
+
+## Found by 
+AkshaySrivastav, SolidityATL, rvierdiiev
+## Summary
+The Perennial protocol has a paused state in which all operations are paused. The protocol can be unpaused by privileged accounts. But when this unpause happens the liquidators can frontrun and liquidate user positions before those users get a chance to make their positions healthy.  
+
+https://github.com/sherlock-audit/2023-05-perennial/blob/main/perennial-mono/packages/perennial/contracts/collateral/Collateral.sol#L108-L135
+
+## Vulnerability Detail
+The `pauser` address can pause the perennial protocol using the `Controller.updatePaused` function. Once the protocol is paused all these operations cannot be done by users:
+- Open/close/modify current make or take positions on a product.
+- Deposit or withdraw collateral.
+- Liquidate under-collateralized positions.
+
+Though, real prices from oracles will surely move up or down during this paused period. If the oracle prices go down, the users won't be allowed to add more collateral to their positions or close their positions. Hence their positions will get under-collateralized (based upon real prices).
+
+Once the protocol is unpaused the liquidators can front-run most users and liquidate their positions. Most users will not get a chance to make their position healthy.
+
+This results in loss of funds for the users.
+
+Perennial also has the concept of settlement delay. Any position opened/closed at oracle version `n` is settled at oracle version `n + 1`. This also alleviates the frontrunning liquidation issue. While validating an account's health before liquidation, the protocol only considers the current maintenance requirement for the account (not the next). This makes users more prone to getting front-runned and liquidated.
+
+Ref: [audit finding](https://github.com/sherlock-audit/2023-03-notional-judging/issues/203)
+
+## Impact
+By front-running any collateral deposit or position closure of a legitimate user which became under-collateralized during the paused state, the liquidator can unfairly liquidate user positions and collect liquidation profit as soon as the protocol is unpaused. This causes loss of funds to the user.
+
+## Code Snippet
+
+Collateral
+```solidity
+    function depositTo(address account, IProduct product, UFixed18 amount)
+    external
+    nonReentrant
+    notPaused
+    notZeroAddress(account)
+    isProduct(product)
+    collateralInvariant(account, product)
+    {
+        _products[product].creditAccount(account, amount);
+        token.pull(msg.sender, amount);
+
+        emit Deposit(account, product, amount);
+    }
+```
+
+Product
+```solidity
+    function closeTakeFor(address account, UFixed18 amount)
+        public
+        nonReentrant
+        notPaused
+        onlyAccountOrMultiInvoker(account)
+        settleForAccount(account)
+        closeInvariant(account)
+        liquidationInvariant(account)
+    {
+        _closeTake(account, amount);
+    }
+
+    function closeMakeFor(address account, UFixed18 amount)
+        public
+        nonReentrant
+        notPaused
+        onlyAccountOrMultiInvoker(account)
+        settleForAccount(account)
+        takerInvariant
+        closeInvariant(account)
+        liquidationInvariant(account)
+    {
+        _closeMake(account, amount);
+    }
+```
+
+## Tool used
+
+Manual Review
+
+## Recommendation
+Consider adding a grace period after unpausing during which liquidation remains blocked to allow users to avoid unfair liquidation by closing their positions or supplying additional collateral.
+
+
+
+## Discussion
+
+**akshaysrivastav**
+
+Escalate for 10 USDC
+
+I think this issue should be considered as valid. As per the comment [here](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/168#issuecomment-1601554168), the protocol team can disagree with the mitigation suggested in #168 but the validity of issue should be accepted. The report clearly shows how a protocol owner actions (pause) will result in unfair liquidations causing loss of funds to users.
+
+Also it is unlikely that on unpause human users will be able to secure their positions before MEV/liquidation bots capture the available profit. Hence the loss is certain.
+
+For reference, a similar issue was consider valid in the recent [Notional V3](https://github.com/sherlock-audit/2023-03-notional-judging/issues/203) contest. Maintaining a consistent valid/invalid classification standard will be ideal here.
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> 
+> I think this issue should be considered as valid. As per the comment [here](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/168#issuecomment-1601554168), the protocol team can disagree with the mitigation suggested in #168 but the validity of issue should be accepted. The report clearly shows how a protocol owner actions (pause) will result in unfair liquidations causing loss of funds to users.
+> 
+> Also it is unlikely that on unpause human users will be able to secure their positions before MEV/liquidation bots capture the available profit. Hence the loss is certain.
+> 
+> For reference, a similar issue was consider valid in the recent [Notional V3](https://github.com/sherlock-audit/2023-03-notional-judging/issues/203) contest. Maintaining a consistent valid/invalid classification standard will be ideal here.
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**KenzoAgada**
+
+Sherlock:
+- At the main issue, #168, I wrote that "This can be considered as an un-mandatory "idea for improvement", but I think that the risk is there so this is a reasonable submission, and if I recall correctly, was accepted by Sherlock judges in the past."
+- The sponsor disputed the issue and replied that "By introducing a time delay to allow traders to optionally increase their collateral to meet maintenance requirements the Product runs the risk of going into further shortfall if the traders opt to not increase their margin. The fairest option for both liquidators and other traders in the protocol is to require that traders are paying attention and self-liquidate (to retain the fee) if they so chose.".
+- I accepted the sponsor's POV and closed the issue as a design choice.
+- However here the escalator says that even if the sponsor would not like to implement the mitigation, the _validity_ of the issue should be accepted.
+- This issue has been accepted recently in [Notional](https://github.com/sherlock-audit/2023-03-notional-judging/issues/203) and [Blueberry](https://github.com/sherlock-audit/2023-02-blueberry-judging/issues/290). But unlike here, there the sponsor confirmed the issues.
+
+I think the watson raises a valid point. Even if the sponsor chose not to allow this as a design choice, the issue itself is there, was accepted by Sherlock in the past, and therefore should probably be accepted here as well.
+I think restoring it to medium is fair.
+
+**jacksanford1**
+
+Seems like a valid issue if true. The recommended fix's acceptance/rejection is not relevant to the issue itself. 
+
+This is a temporary freezing (pause) induced by the protocol team, but it can cause the protocol to enter a state where on unpause many users will lose their funds to MEV (due to being liquidatable) before the user can salvage the position potentially. 
+
+Borderline Low issue but we can make it a Medium since it can result in a significant loss of funds for many users at the same time. 
+
+**jacksanford1**
+
+Result:
+Medium
+Has Duplicates
+Reasoning can be found in the previous message.
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [akshaysrivastav](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/190/#issuecomment-1614784003): accepted
+
+# Issue M-16: `BalancedVault` doesn't consider potential break in one of the markets 
 
 Source: https://github.com/sherlock-audit/2023-05-perennial-judging/issues/232 
 
@@ -1224,4 +2645,57 @@ Implement a partial/emergency withdrawal or acknowledge the risk clearly in Vaul
 **KenzoAgada**
 
 Please note that the duplicate issues referenced above mention paused markets and oracle fails as additional scenarios where markets can break and therefore break the vault. Issue #20 contains recommendations on how to handle stuck epochs and oracles.
+
+**securitygrid**
+
+Escalate for 10 USDC
+This is not valid M. 
+The protocol is designed that way. Any protocol that requires external oracle price feeds will experience oracle misbehavior. This is inevitable. But this is only temporary and occasional. This is acceptable.
+
+**sherlock-admin**
+
+ > Escalate for 10 USDC
+> This is not valid M. 
+> The protocol is designed that way. Any protocol that requires external oracle price feeds will experience oracle misbehavior. This is inevitable. But this is only temporary and occasional. This is acceptable.
+
+You've created a valid escalation for 10 USDC!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**KenzoAgada**
+
+- Note that I grouped together with this issue all submissions which speak about increased danger of vaults due to breaking markets - either by oracle failures or paused products.
+- The issues say that a vault with `n` markets is exposed to `2n` possible problem in products.
+- If even _only one_ of the products is paused, or experiences oracle issues, the vault would jam.
+- There are no contingency measures in such a scenario.
+- I agree with the escalation that "the protocol is designed that way". But I'm not sure that users are aware that eg. a pause in one of the products would render the whole vault inoperable.
+- Therefore I think it is debatable, and understand if the sponsor won't fix, but I would maintain medium severity due to the increased risk and lack of contingency measures.
+
+edit: additionally, a watson mentioned in the chat that in the [contest readme](https://github.com/sherlock-audit/2023-05-perennial#q-in-case-of-external-protocol-integrations-are-the-risks-of-external-contracts-pausing-or-executing-an-emergency-withdrawal-acceptable-if-not-watsons-will-submit-issues-related-to-these-situations-that-can-harm-your-protocols-functionality) there is the following section:
+> **Q: In case of external protocol integrations, are the risks of external contracts pausing or executing an emergency withdrawal acceptable? If not, Watsons will submit issues related to these situations that can harm your protocol's functionality.**
+A: We want to be aware of issues that might arise from Chainlink or DSU integrations
+
+I think that this can be legitimately said to be such an issue, and AFAIK it was not mentioned specifically anywhere that a vault would break if one of `2n` products breaks.
+
+**jacksanford1**
+
+@securitygrid I think what the submitter is saying is that a market could break for an unknown reason (could be oracle-related or not) and if the vault deposits into 10 markets and 1 market breaks in a irrecoverable way, then the funds in the other 9 markets cannot be retrieved by the depositor. 
+
+If that's the case, I'd argue this is a Medium vulnerability. 
+
+**jacksanford1**
+
+Result:
+Medium
+Has duplicates
+Keeping as Medium due to reasoning in previous comment. 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [securitygrid](https://github.com/sherlock-audit/2023-05-perennial-judging/issues/232/#issuecomment-1614902372): rejected
 
